@@ -24,9 +24,10 @@ final class EditorTextView: NSTextView {
     /// The fixed end of the selection. NSTextView keeps its anchor private, and neither its
     /// selectionAffinity nor TextKit 2's selection affinity reliably reports direction.
     private var selectionAnchor = 0
-    /// Vertex count of each polygon in the drawn selection; a path animates only between shapes
-    /// with the same structure, otherwise Core Animation interpolates nonsense.
-    private var selectionSignature: [Int] = []
+    /// Vertex y-coordinates of each polygon in the drawn selection. The path animates only when
+    /// these are unchanged, i.e. the selection grows or shrinks sideways within the same lines;
+    /// interpolating between outlines of different lines morphs through distorted shapes.
+    private var selectionSignature: [[CGFloat]] = []
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -164,7 +165,7 @@ final class EditorTextView: NSTextView {
     private func updateSelection(_ selection: NSRange, animated: Bool) {
         selectionView.frame = bounds
         let polygons = selection.length > 0 ? selectionPolygons(for: selection) : []
-        let signature = polygons.map(\.count)
+        let signature = polygons.map { $0.map { ($0.y * 2).rounded() / 2 } }
         let path = Self.roundedPath(polygons, radius: Self.selectionRadius)
 
         CATransaction.begin()
@@ -235,7 +236,8 @@ final class EditorTextView: NSTextView {
         // line so the text sits centered, then split any remaining gap so stacked lines touch.
         let halfSpacing = MarkdownHighlighter.paragraphStyle.lineSpacing / 2
         lines = lines.map { $0.insetBy(dx: 0, dy: -halfSpacing) }
-        for i in lines.indices.dropLast() where lines[i + 1].minY > lines[i].maxY {
+        // Align both gaps and overlaps; a mismatch leaves the outline with a slanted edge.
+        for i in lines.indices.dropLast() where abs(lines[i + 1].minY - lines[i].maxY) > 0.01 {
             let middle = (lines[i].maxY + lines[i + 1].minY) / 2
             lines[i].size.height = middle - lines[i].minY
             lines[i + 1].size.height += lines[i + 1].minY - middle
