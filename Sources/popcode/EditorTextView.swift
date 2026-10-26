@@ -21,7 +21,9 @@ final class EditorTextView: NSTextView {
     private let selectionView = FlippedView()
     private let selectionShape = CAShapeLayer()
     private var isDecorated = false
-    private var lastSelection = NSRange(location: 0, length: 0)
+    /// The fixed end of the selection. NSTextView keeps its anchor private, and neither its
+    /// selectionAffinity nor TextKit 2's selection affinity reliably reports direction.
+    private var selectionAnchor = 0
     /// Vertex count of each polygon in the drawn selection; a path animates only between shapes
     /// with the same structure, otherwise Core Animation interpolates nonsense.
     private var selectionSignature: [Int] = []
@@ -87,15 +89,19 @@ final class EditorTextView: NSTextView {
         let selection = selectedRange()
         updateSelection(selection, animated: animated)
         updateCaret(at: activeEnd(of: selection), animated: animated)
-        lastSelection = selection
     }
 
     /// The end of the selection that is moving, where VS Code keeps the caret while selecting.
-    /// NSTextView doesn't expose its anchor, so infer it from which end changed.
+    /// Extending keeps one end on the anchor; only a selection touching neither end of it (a click,
+    /// double-click, select all) starts a new anchor. Re-running with an unchanged selection is stable.
     private func activeEnd(of selection: NSRange) -> Int {
-        guard selection.length > 0 else { return selection.location }
-        if selection.location == lastSelection.location { return NSMaxRange(selection) }
-        if NSMaxRange(selection) == NSMaxRange(lastSelection) { return selection.location }
+        if selection.length == 0 {
+            selectionAnchor = selection.location
+            return selection.location
+        }
+        if selection.location == selectionAnchor { return NSMaxRange(selection) }
+        if NSMaxRange(selection) == selectionAnchor { return selection.location }
+        selectionAnchor = selection.location
         return NSMaxRange(selection)
     }
 
@@ -133,10 +139,21 @@ final class EditorTextView: NSTextView {
         if let segment, segment.height > 0 {
             rect = segment.offsetBy(dx: origin.x, dy: origin.y)
         } else {
-            // Empty document: no glyphs to measure, so use the typing font's line height.
+            // TextKit 2 reports a zero rect for an empty line, so place the caret from the line's
+            // layout fragment; past the final newline there is none, so go below the last line.
             let font = (typingAttributes[.font] as? NSFont) ?? MarkdownHighlighter.bodyFont
-            rect = NSRect(x: origin.x + (textContainer?.lineFragmentPadding ?? 0), y: origin.y,
-                          width: 0, height: ceil(font.ascender - font.descender + font.leading))
+            let lineHeight = ceil(font.ascender - font.descender + font.leading)
+            var top: CGFloat = 0
+            var height = lineHeight
+            if let fragment = layoutManager.textLayoutFragment(for: position),
+               fragment.rangeInElement.location.compare(position) != .orderedDescending {
+                top = fragment.layoutFragmentFrame.minY
+                height = fragment.textLineFragments.first?.typographicBounds.height ?? lineHeight
+            } else if location > 0 {
+                top = layoutManager.usageBoundsForTextContainer.maxY - lineHeight
+            }
+            rect = NSRect(x: origin.x + (textContainer?.lineFragmentPadding ?? 0), y: origin.y + top,
+                          width: 0, height: height)
         }
         rect.size.width = 2
         return rect.integral
@@ -182,10 +199,16 @@ final class EditorTextView: NSTextView {
         var lines: [CGRect] = []
         layoutManager.enumerateTextSegments(in: range, type: .selection, options: .rangeNotRequired) {
             _, frame, _, _ in
+            // TextKit 2 reports empty lines as a zero rect at the origin; skip them, the gap
+            // closing below covers their height.
+            guard frame.height > 0 else { return true }
             // An empty segment is a selected line break; give it a sliver of width as VS Code does.
             let rect = CGRect(x: frame.minX + origin.x, y: frame.minY + origin.y,
                               width: max(frame.width, 6), height: frame.height)
-            if let last = lines.last, abs(last.minY - rect.minY) < 1 {
+            // Segments of one line can differ in height and top (inline code uses a smaller font),
+            // so merge by vertical overlap rather than equal tops.
+            if let last = lines.last,
+               min(last.maxY, rect.maxY) - max(last.minY, rect.minY) > min(last.height, rect.height) / 2 {
                 lines[lines.count - 1] = last.union(rect)
             } else {
                 lines.append(rect)
