@@ -184,8 +184,12 @@ final class EditorTextView: NSTextView {
         selectionSignature = signature
     }
 
-    /// One rect per line of the selection, merged into outlines: lines that overlap horizontally
-    /// join into a single polygon (VS Code's connected shape), otherwise they stay separate.
+    /// One rect per visual line, merged into outlines: lines that overlap horizontally join into a
+    /// single polygon (VS Code's connected shape), otherwise they stay separate.
+    ///
+    /// Built from line fragments rather than `.selection` segments: those run to the container's
+    /// edge whenever a line break is selected, while VS Code stops each line at its text and adds
+    /// only a sliver for the newline.
     private func selectionPolygons(for selection: NSRange) -> [[CGPoint]] {
         guard let layoutManager = textLayoutManager,
               let content = layoutManager.textContentManager,
@@ -196,34 +200,52 @@ final class EditorTextView: NSTextView {
         layoutManager.ensureLayout(for: range)
 
         let origin = textContainerOrigin
+        let documentStart = content.documentRange.location
+        let selectionEnd = NSMaxRange(selection)
+        let newlineWidth = ceil(MarkdownHighlighter.bodyFont.pointSize * 0.5)
         var lines: [CGRect] = []
-        layoutManager.enumerateTextSegments(in: range, type: .selection, options: .rangeNotRequired) {
-            _, frame, _, _ in
-            // TextKit 2 reports empty lines as a zero rect at the origin; skip them, the gap
-            // closing below covers their height.
-            guard frame.height > 0 else { return true }
-            // An empty segment is a selected line break; give it a sliver of width as VS Code does.
-            let rect = CGRect(x: frame.minX + origin.x, y: frame.minY + origin.y,
-                              width: max(frame.width, 6), height: frame.height)
-            // Segments of one line can differ in height and top (inline code uses a smaller font),
-            // so merge by vertical overlap rather than equal tops.
-            if let last = lines.last,
-               min(last.maxY, rect.maxY) - max(last.minY, rect.minY) > min(last.height, rect.height) / 2 {
-                lines[lines.count - 1] = last.union(rect)
-            } else {
-                lines.append(rect)
+        layoutManager.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
+            let paragraphStart = content.offset(from: documentStart, to: fragment.rangeInElement.location)
+            guard paragraphStart < selectionEnd else { return false }
+            let frame = fragment.layoutFragmentFrame
+            for line in fragment.textLineFragments {
+                let lineRange = line.characterRange
+                let lineStart = paragraphStart + lineRange.location
+                let lineEnd = lineStart + lineRange.length
+                let from = max(selection.location, lineStart)
+                let to = min(selectionEnd, lineEnd)
+                guard to > from else { continue }
+                let text = line.attributedString.string as NSString
+                let endsWithNewline = lineRange.length > 0
+                    && text.character(at: NSMaxRange(lineRange) - 1) == 0x0A
+                let textEnd = endsWithNewline ? lineEnd - 1 : lineEnd
+                let x0 = line.locationForCharacter(at: from - paragraphStart).x
+                let x1 = line.locationForCharacter(at: min(to, textEnd) - paragraphStart).x
+                var width = x1 - x0
+                if endsWithNewline && to > textEnd { width += newlineWidth }
+                guard width > 0 else { continue }
+                let bounds = line.typographicBounds
+                lines.append(CGRect(x: origin.x + frame.minX + bounds.minX + x0,
+                                    y: origin.y + frame.minY + bounds.minY,
+                                    width: width, height: bounds.height))
             }
             return true
         }
-        // Close the line-spacing gaps so stacked lines read as one shape.
+        // Typographic bounds hug the glyphs; spread the line spacing evenly above and below each
+        // line so the text sits centered, then split any remaining gap so stacked lines touch.
+        let halfSpacing = MarkdownHighlighter.paragraphStyle.lineSpacing / 2
+        lines = lines.map { $0.insetBy(dx: 0, dy: -halfSpacing) }
         for i in lines.indices.dropLast() where lines[i + 1].minY > lines[i].maxY {
-            lines[i].size.height = lines[i + 1].minY - lines[i].minY
+            let middle = (lines[i].maxY + lines[i + 1].minY) / 2
+            lines[i].size.height = middle - lines[i].minY
+            lines[i + 1].size.height += lines[i + 1].minY - middle
+            lines[i + 1].origin.y = middle
         }
 
         var groups: [[CGRect]] = []
         for line in lines {
             if let previous = groups.last?.last,
-               min(previous.maxX, line.maxX) - max(previous.minX, line.minX) > Self.selectionRadius * 2 {
+               min(previous.maxX, line.maxX) - max(previous.minX, line.minX) > Self.selectionRadius {
                 groups[groups.count - 1].append(line)
             } else {
                 groups.append([line])
