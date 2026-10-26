@@ -32,7 +32,8 @@ final class MarkdownHighlighter {
     private let rule = regex(#"^[ \t]*([-*_])([ \t]*\1){2,}[ \t]*$"#)
     private let inlineCode = regex(#"(`+)[^`\n]+?\1"#)
     private let bold = regex(#"(\*\*|__)(?=\S)(.+?)(?<=\S)\1"#)
-    private let italic = regex(#"(?<![*_\w])([*_])(?=\S)(.+?)(?<=\S)\1(?![*_\w])"#)
+    // The marker must not sit next to another copy of itself, or `**bold**` would also match as italic.
+    private let italic = regex(#"(?<![*\w])\*(?![\s*])(.+?)(?<![\s*])\*(?![*\w])|(?<![_\w])_(?![\s_])(.+?)(?<![\s_])_(?![_\w])"#)
     private let strike = regex(#"(~~)(?=\S)(.+?)(?<=\S)~~"#)
     private let link = regex(#"\[([^\]\n]+)\](\([^)\n]+\))"#)
 

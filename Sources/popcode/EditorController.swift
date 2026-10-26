@@ -4,6 +4,75 @@ import AppKit
 final class EditorTextView: NSTextView {
     var onSave: () -> Void = {}
 
+    // MARK: Smooth caret
+    // Like VS Code's "Smooth Caret Animation": the system caret is hidden and a system
+    // NSTextInsertionIndicator glides to each new insertion point instead of jumping.
+
+    private static let caretGlide: TimeInterval = 0.09
+    private let caret = NSTextInsertionIndicator()
+    /// The indicator resets its own frame animations whenever it is moved, so it rides inside a
+    /// plain view and the glide is applied to that view instead.
+    private let caretHost = NSView()
+    private var caretPlaced = false
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        guard window != nil, caretHost.superview == nil else { return }
+        insertionPointColor = .clear
+        caret.displayMode = .automatic
+        caret.autoresizingMask = [.height]
+        caretHost.wantsLayer = true
+        caretHost.addSubview(caret)
+        addSubview(caretHost)
+        updateCaret()
+    }
+
+    override func setSelectedRanges(_ ranges: [NSValue], affinity: NSSelectionAffinity, stillSelecting: Bool) {
+        super.setSelectedRanges(ranges, affinity: affinity, stillSelecting: stillSelecting)
+        updateCaret()
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        updateCaret()
+    }
+
+    private func updateCaret() {
+        guard caretHost.superview != nil else { return }
+        let selection = selectedRange()
+        caretHost.isHidden = selection.length > 0
+        guard selection.length == 0, let target = caretRect(at: selection.location) else { return }
+        caret.frame = NSRect(x: 0, y: 0, width: 0, height: target.height)
+        if caretPlaced, caretHost.frame != target {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = Self.caretGlide
+                context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+                context.allowsImplicitAnimation = true
+                caretHost.animator().frame = target
+            }
+        } else {
+            caretHost.frame = target
+        }
+        caretPlaced = true
+    }
+
+    private func caretRect(at location: Int) -> NSRect? {
+        guard let window else { return nil }
+        let screenRect = firstRect(forCharacterRange: NSRange(location: location, length: 0), actualRange: nil)
+        var rect: NSRect
+        if screenRect.height > 0 {
+            rect = convert(window.convertFromScreen(screenRect), from: nil)
+        } else {
+            // Empty document: no glyphs to measure, so use the typing font's line height.
+            let font = (typingAttributes[.font] as? NSFont) ?? MarkdownHighlighter.bodyFont
+            let origin = textContainerOrigin
+            rect = NSRect(x: origin.x + (textContainer?.lineFragmentPadding ?? 0), y: origin.y,
+                          width: 0, height: ceil(font.ascender - font.descender + font.leading))
+        }
+        rect.size.width = max(rect.width, 2)
+        return rect.integral
+    }
+
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
         guard flags.contains(.command), window?.firstResponder === self else {
