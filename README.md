@@ -6,6 +6,10 @@ Press **Ctrl+G** in Claude Code (or run `git commit`) and a small glass popover 
 your terminal's prompt. Edit, press **⌘↩**, and you are back in the terminal — no app switch, no tab
 to close.
 
+<p align="center">
+  <img src="docs/screenshot.png" width="640" alt="popcode editing a Markdown file: a dark glass popover with highlighted headings, bold text, inline code, and a selected title">
+</p>
+
 ## Why
 
 With no `$VISUAL` set, Claude Code's Ctrl+G opens VS Code. For editing a few lines of prompt that means:
