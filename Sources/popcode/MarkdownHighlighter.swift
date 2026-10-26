@@ -3,7 +3,7 @@ import AppKit
 /// Obsidian-style source-mode styling: the Markdown stays as typed, but headings
 /// grow, emphasis is applied, and syntax markers fade back.
 @MainActor
-final class MarkdownHighlighter {
+final class MarkdownHighlighter: Highlighter {
     static let bodyFont = NSFont.systemFont(ofSize: 15)
     static let codeFont = NSFont.monospacedSystemFont(ofSize: 13.5, weight: .regular)
     static let paragraphStyle: NSParagraphStyle = {
@@ -37,30 +37,9 @@ final class MarkdownHighlighter {
     private let strike = regex(#"(~~)(?=\S)(.+?)(?<=\S)~~"#)
     private let link = regex(#"\[([^\]\n]+)\](\([^)\n]+\))"#)
 
-    /// Styles into a scratch copy, then writes back only the runs whose attributes changed.
-    /// Resetting the whole storage on every keystroke made TextKit 2 drop all layout and fall back
-    /// to estimated heights for off-screen text, so the document height (and the text under the
-    /// viewport) jumped while typing in the middle of a long document.
-    func apply(to storage: NSTextStorage) {
-        let styled = NSMutableAttributedString(string: storage.string)
-        style(styled)
-        storage.beginEditing()
-        defer { storage.endEditing() }
-        styled.enumerateAttributes(in: NSRange(location: 0, length: styled.length)) { wanted, range, _ in
-            var location = range.location
-            while location < NSMaxRange(range) {
-                var current = NSRange()
-                let existing = storage.attributes(at: location, longestEffectiveRange: &current,
-                                                  in: NSRange(location: location, length: NSMaxRange(range) - location))
-                if !(existing as NSDictionary).isEqual(to: wanted) {
-                    storage.setAttributes(wanted, range: current)
-                }
-                location = NSMaxRange(current)
-            }
-        }
-    }
+    var bodyAttributes: [NSAttributedString.Key: Any] { Self.bodyAttributes }
 
-    private func style(_ storage: NSMutableAttributedString) {
+    func style(_ storage: NSMutableAttributedString) {
         let text = storage.string as NSString
         let full = NSRange(location: 0, length: text.length)
         storage.setAttributes(Self.bodyAttributes, range: full)

@@ -38,6 +38,9 @@ writing Markdown more comfortably than in a TUI input box. That shouldn't take a
 - Obsidian-style Markdown source highlighting for `.md` files: larger headings, **bold**,
   *italic*, `code`, with the `#` / `**` markers dimmed. No rendered preview — what you type is
   what you see.
+- Syntax highlighting for the files you tend to open in a hurry: shell scripts and dotfiles
+  (`.zshrc`, `.bashrc`, `*.sh`, or a `#!` line naming sh/zsh/bash), JSON/JSONC, YAML, TOML, and
+  INI-style configs such as `.gitconfig`. Code files use a monospaced font.
 
 **Polished details**
 - The popover grows with the text; past its maximum height the text scrolls under soft

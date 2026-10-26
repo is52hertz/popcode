@@ -38,6 +38,10 @@ then exits 0. Built with SwiftPM + AppKit, macOS 26+.
 - `MarkdownHighlighter.apply` must only write back attribute runs that changed: resetting the whole
   storage per keystroke makes TextKit 2 drop all layout and use estimated heights off-screen, so text
   jumps while typing mid-document in a long file.
+- Highlighters conform to `Highlighter` (Highlighter.swift); `makeHighlighter(for:text:)` picks one from the
+  file name, extension, or shebang. `CodeHighlighter` joins a language's token patterns into one named-group
+  alternation scanned left to right, so token patterns must use non-capturing groups, and ICU has no `\K`
+  (use a bounded lookbehind). Adding a language = adding a `Language` table plus a detection rule.
 - Markdown styling runs only for `.md`/`.markdown` files (so git's `COMMIT_EDITMSG` `#` comments
   are not turned into headings) and is skipped while the IME has marked text.
 - osascript keystrokes and `screencapture` are not permitted from the agent shell here, so focus/IME
