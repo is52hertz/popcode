@@ -1,0 +1,9 @@
+
+/.vibe-init/pending/
+
+/.vibe-init/backups/
+
+/.vibe-init/lock/
+
+.build/
+.DS_Store
