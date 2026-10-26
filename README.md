@@ -100,3 +100,7 @@ with status 0 once you save or discard. Claude Code writes the prompt to a tempo
 Keep `code` in the binary's name. Claude Code treats editors whose names contain `code` as GUI
 editors: it keeps the TUI on screen while the editor is open and passes `-g <file>:<line>`, which
 popcode uses to place the caret where it was in the prompt.
+
+## License
+
+[MIT](LICENSE)
