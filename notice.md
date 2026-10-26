@@ -35,6 +35,9 @@ then exits 0. Built with SwiftPM + AppKit, macOS 26+.
 - AppKit has no public scroll edge effect for a free-standing scroll view (`NSScrollEdgeEffectStyle`
   is only for titlebar/split-view accessories), so the overflow fade + blur in `EditorContainerView`
   is hand-rolled.
+- `MarkdownHighlighter.apply` must only write back attribute runs that changed: resetting the whole
+  storage per keystroke makes TextKit 2 drop all layout and use estimated heights off-screen, so text
+  jumps while typing mid-document in a long file.
 - Markdown styling runs only for `.md`/`.markdown` files (so git's `COMMIT_EDITMSG` `#` comments
   are not turned into headings) and is skipped while the IME has marked text.
 - osascript keystrokes and `screencapture` are not permitted from the agent shell here, so focus/IME

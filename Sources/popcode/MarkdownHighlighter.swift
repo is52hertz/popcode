@@ -37,11 +37,32 @@ final class MarkdownHighlighter {
     private let strike = regex(#"(~~)(?=\S)(.+?)(?<=\S)~~"#)
     private let link = regex(#"\[([^\]\n]+)\](\([^)\n]+\))"#)
 
+    /// Styles into a scratch copy, then writes back only the runs whose attributes changed.
+    /// Resetting the whole storage on every keystroke made TextKit 2 drop all layout and fall back
+    /// to estimated heights for off-screen text, so the document height (and the text under the
+    /// viewport) jumped while typing in the middle of a long document.
     func apply(to storage: NSTextStorage) {
-        let text = storage.string as NSString
-        let full = NSRange(location: 0, length: text.length)
+        let styled = NSMutableAttributedString(string: storage.string)
+        style(styled)
         storage.beginEditing()
         defer { storage.endEditing() }
+        styled.enumerateAttributes(in: NSRange(location: 0, length: styled.length)) { wanted, range, _ in
+            var location = range.location
+            while location < NSMaxRange(range) {
+                var current = NSRange()
+                let existing = storage.attributes(at: location, longestEffectiveRange: &current,
+                                                  in: NSRange(location: location, length: NSMaxRange(range) - location))
+                if !(existing as NSDictionary).isEqual(to: wanted) {
+                    storage.setAttributes(wanted, range: current)
+                }
+                location = NSMaxRange(current)
+            }
+        }
+    }
+
+    private func style(_ storage: NSMutableAttributedString) {
+        let text = storage.string as NSString
+        let full = NSRange(location: 0, length: text.length)
         storage.setAttributes(Self.bodyAttributes, range: full)
 
         let blocks = fencedBlocks(in: text)
@@ -133,14 +154,14 @@ final class MarkdownHighlighter {
         return blocks
     }
 
-    private func addTrait(_ trait: NSFontTraitMask, to range: NSRange, in storage: NSTextStorage) {
+    private func addTrait(_ trait: NSFontTraitMask, to range: NSRange, in storage: NSMutableAttributedString) {
         storage.enumerateAttribute(.font, in: range) { value, subrange, _ in
             let font = (value as? NSFont) ?? Self.bodyFont
             storage.addAttribute(.font, value: NSFontManager.shared.convert(font, toHaveTrait: trait), range: subrange)
         }
     }
 
-    private func dimEnds(of range: NSRange, length: Int, in storage: NSTextStorage) {
+    private func dimEnds(of range: NSRange, length: Int, in storage: NSMutableAttributedString) {
         storage.addAttribute(.foregroundColor, value: Self.markerColor,
                              range: NSRange(location: range.location, length: length))
         storage.addAttribute(.foregroundColor, value: Self.markerColor,
