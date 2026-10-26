@@ -296,7 +296,8 @@ final class EditorTextView: NSTextView {
         let origin = textContainerOrigin
         let documentStart = content.documentRange.location
         let selectionEnd = NSMaxRange(selection)
-        let newlineWidth = ceil(MarkdownHighlighter.bodyFont.pointSize * 0.5)
+        let bodyFont = (typingAttributes[.font] as? NSFont) ?? MarkdownHighlighter.bodyFont
+        let newlineWidth = ceil(bodyFont.pointSize * 0.5)
         var lines: [CGRect] = []
         layoutManager.enumerateTextLayoutFragments(from: start, options: [.ensuresLayout]) { fragment in
             let paragraphStart = content.offset(from: documentStart, to: fragment.rangeInElement.location)

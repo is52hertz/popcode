@@ -128,7 +128,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
     private let clipView = PinnedClipView()
     private let container: EditorContainerView
     private let hint = NSTextField(labelWithString: EditorController.hintText)
-    private let highlighter: MarkdownHighlighter?
+    private let highlighter: Highlighter?
     private var escapeArmedAt: Date?
     private var width: CGFloat = 640
     private var maxTextHeight: CGFloat = 560
@@ -140,8 +140,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
         self.url = url
         self.original = text
         self.cursorLine = cursorLine
-        let ext = url.pathExtension.lowercased()
-        highlighter = (ext == "md" || ext == "markdown") ? MarkdownHighlighter() : nil
+        highlighter = makeHighlighter(for: url, text: text)
 
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
@@ -179,8 +178,9 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
-        textView.font = MarkdownHighlighter.bodyFont
-        textView.typingAttributes = MarkdownHighlighter.bodyAttributes
+        let bodyAttributes = highlighter?.bodyAttributes ?? MarkdownHighlighter.bodyAttributes
+        textView.font = bodyAttributes[.font] as? NSFont
+        textView.typingAttributes = bodyAttributes
         textView.string = text
 
         hint.font = .systemFont(ofSize: 11)
