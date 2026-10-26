@@ -17,6 +17,12 @@ then exits 0. Built with SwiftPM + AppKit, macOS 26+.
   `+<line>` only to vi/emacs/nano-like names. **The binary name must keep `code` in it.**
 
 ## Gotchas
+- Caret and selection are custom (`EditorTextView`): the system insertion point and selection highlight are
+  made clear, a system `NSTextInsertionIndicator` (inside a host view, since it cancels its own frame
+  animations) glides, and a `CAShapeLayer` draws the selection as rounded outlines. The selection view
+  must stay the bottom-most subview: TextKit 2 draws text in `_NSTextContentView` subviews above it.
+  VS Code itself animates only the caret (80ms); the selection path animation here is an extra and
+  only runs when the outline keeps the same vertex structure.
 - There is no main menu: ⌘-shortcuts are routed by hand in `EditorTextView.performKeyEquivalent`.
   New ⌘ shortcuts go there.
 - Don't add custom glass/visual-effect backgrounds inside the popover; Apple's Liquid Glass guidance
