@@ -163,10 +163,14 @@ final class EditorContainerView: NSView {
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
-        // The scroll view's layer is not flipped: location 0 is the bottom edge.
+        // AppKit flips the scroll view's layer geometry, putting location 0 at the top; read the
+        // actual orientation rather than assuming, since it decides which edge each fade lands on.
+        let topFirst = scrollView.layer?.contentsAreFlipped() ?? false
+        let fromTop = hiddenAbove ? NSColor.clear : NSColor.black
+        let fromBottom = hiddenBelow ? NSColor.clear : NSColor.black
         opacityMask.frame = scrollView.bounds
-        opacityMask.colors = [hiddenBelow ? NSColor.clear : NSColor.black, .black, .black,
-                              hiddenAbove ? NSColor.clear : NSColor.black].map(\.cgColor)
+        opacityMask.colors = (topFirst ? [fromTop, .black, .black, fromBottom]
+                                       : [fromBottom, .black, .black, fromTop]).map(\.cgColor)
         opacityMask.locations = [0, fade, 1 - fade, 1].map { NSNumber(value: Double($0)) }
         opacityMask.startPoint = CGPoint(x: 0.5, y: 0)
         opacityMask.endPoint = CGPoint(x: 0.5, y: 1)
