@@ -42,6 +42,11 @@ final class EditorTextView: NSTextView {
     private var selectionLink: CADisplayLink?
     private var lastSelectionFrame: CFTimeInterval?
 
+    /// Drag-select past an edge scrolls continuously at a speed set by how far the pointer is past
+    /// the edge, instead of AppKit's periodic jumps.
+    private var autoscrollLink: CADisplayLink?
+    private var lastAutoscrollFrame: CFTimeInterval?
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil, !isDecorated else { return }
@@ -417,6 +422,55 @@ final class EditorTextView: NSTextView {
             path.closeSubpath()
         }
         return path
+    }
+
+    // MARK: - Smooth autoscroll
+
+    override func autoscroll(with event: NSEvent) -> Bool {
+        guard enclosingScrollView != nil else { return super.autoscroll(with: event) }
+        if autoscrollLink == nil {
+            lastAutoscrollFrame = nil
+            let screen = window?.screen ?? NSScreen.main ?? NSScreen.screens[0]
+            let link = screen.displayLink(target: self, selector: #selector(stepAutoscroll(_:)))
+            // .common includes the event-tracking mode the drag-select loop runs in.
+            link.add(to: .main, forMode: .common)
+            autoscrollLink = link
+        }
+        // The selection keeps following the pointer through the tracking loop's periodic events.
+        return true
+    }
+
+    @objc private func stepAutoscroll(_ link: CADisplayLink) {
+        guard NSEvent.pressedMouseButtons & 1 != 0, let window,
+              let scrollView = enclosingScrollView else { return stopAutoscroll() }
+        let clip = scrollView.contentView
+        let pointer = clip.convert(window.convertPoint(fromScreen: NSEvent.mouseLocation), from: nil)
+        let visible = clip.bounds
+        // The clip view is flipped like the text view: minY is the top edge.
+        let overshoot: CGFloat
+        if pointer.y < visible.minY {
+            overshoot = pointer.y - visible.minY
+        } else if pointer.y > visible.maxY {
+            overshoot = pointer.y - visible.maxY
+        } else {
+            return stopAutoscroll()
+        }
+
+        let now = link.timestamp
+        let dt = lastAutoscrollFrame.map { now - $0 } ?? link.duration
+        lastAutoscrollFrame = now
+        let speed = min(2000, 80 + abs(overshoot) * 12)  // points per second
+        let maxY = max(0, frame.height - visible.height)
+        var origin = visible.origin
+        origin.y = min(max(origin.y + (overshoot < 0 ? -speed : speed) * dt, 0), maxY)
+        guard origin.y != visible.minY else { return }
+        clip.scroll(to: origin)
+        scrollView.reflectScrolledClipView(clip)
+    }
+
+    private func stopAutoscroll() {
+        autoscrollLink?.invalidate()
+        autoscrollLink = nil
     }
 
     // MARK: - Shortcuts
