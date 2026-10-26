@@ -33,12 +33,28 @@ final class EditorTextView: NSTextView {
     }
 }
 
+/// Holds the text at the top while it fits, so the scroll view never scrolls (or flashes a
+/// scroller) in the frames between the text growing and the popover catching up.
+final class PinnedClipView: NSClipView {
+    var isPinned = true
+
+    override func constrainBoundsRect(_ proposedBounds: NSRect) -> NSRect {
+        var rect = super.constrainBoundsRect(proposedBounds)
+        if isPinned { rect.origin.y = 0 }
+        return rect
+    }
+}
+
 /// Fades the scroll view's content out (opacity + blur) at whichever edge has more content beyond it.
 /// AppKit has no public scroll edge effect for a free-standing scroll view, so this is hand-rolled.
 final class EditorContainerView: NSView {
     static let fadeLength: CGFloat = 28
 
     let scrollView: NSScrollView
+    /// Fades only appear once the text is taller than the editor can grow.
+    var isOverflowing = false {
+        didSet { if isOverflowing != oldValue { updateEdges() } }
+    }
     private let opacityMask = CAGradientLayer()
     private let topBlur = EdgeBlurView(fadesDown: true)
     private let bottomBlur = EdgeBlurView(fadesDown: false)
@@ -71,8 +87,8 @@ final class EditorContainerView: NSView {
     @objc func updateEdges() {
         let clip = scrollView.contentView
         let documentHeight = scrollView.documentView?.frame.height ?? 0
-        let hiddenAbove = clip.bounds.minY > 0.5
-        let hiddenBelow = clip.bounds.maxY < documentHeight - 0.5
+        let hiddenAbove = isOverflowing && clip.bounds.minY > 0.5
+        let hiddenBelow = isOverflowing && clip.bounds.maxY < documentHeight - 0.5
         let height = max(scrollView.bounds.height, 1)
         let fade = min(Self.fadeLength / height, 0.5)
 
@@ -129,6 +145,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
     private static let hintArea: CGFloat = 30
     private static let minTextHeight: CGFloat = 72
     private static let horizontalPadding: CGFloat = 8
+    /// Time constant of the ease-out height animation; ~95% settled after 3τ.
+    private static let resizeTimeConstant: CFTimeInterval = 0.07
 
     private let url: URL
     private let original: String
@@ -136,12 +154,16 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
     private let popover = NSPopover()
     private let anchorWindow: NSPanel
     private let textView = EditorTextView(usingTextLayoutManager: true)
+    private let clipView = PinnedClipView()
     private let container: EditorContainerView
     private let hint = NSTextField(labelWithString: EditorController.hintText)
     private let highlighter: MarkdownHighlighter?
     private var escapeArmedAt: Date?
     private var width: CGFloat = 640
     private var maxTextHeight: CGFloat = 560
+    private var targetHeight: CGFloat = 0
+    private var resizeLink: CADisplayLink?
+    private var lastFrameTime: CFTimeInterval?
 
     init(url: URL, text: String, cursorLine: Int?) {
         self.url = url
@@ -154,6 +176,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
         scrollView.drawsBackground = false
+        clipView.drawsBackground = false
+        scrollView.contentView = clipView
         scrollView.documentView = textView
         container = EditorContainerView(scrollView: scrollView)
 
@@ -220,7 +244,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
         anchorWindow.orderFrontRegardless()
 
         container.frame = NSRect(origin: .zero, size: NSSize(width: width, height: 200))
-        popover.contentSize = preferredSize()
+        updateLayoutState()
+        popover.contentSize = NSSize(width: width, height: targetHeight)
         placeCursor()
         NSApp.activate()
         popover.show(relativeTo: anchorWindow.contentView!.bounds, of: anchorWindow.contentView!, preferredEdge: .maxY)
@@ -265,6 +290,11 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
 
     // MARK: - NSPopoverDelegate
 
+    func popoverDidShow(_ notification: Notification) {
+        // Resizes are animated by hand from here on (see animateResize).
+        popover.animates = false
+    }
+
     func popoverShouldClose(_ popover: NSPopover) -> Bool {
         // NSPopover closes itself on Esc via cancelOperation:; route that through our discard logic.
         handleEscape()
@@ -285,9 +315,13 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
 
     func textDidChange(_ notification: Notification) {
         highlight()
-        let size = preferredSize()
-        if abs(size.height - popover.contentSize.height) > 0.5 {
-            popover.contentSize = size
+        let wasOverflowing = container.isOverflowing
+        updateLayoutState()
+        if container.isOverflowing && !wasOverflowing {
+            textView.scrollRangeToVisible(textView.selectedRange())
+        }
+        if abs(targetHeight - popover.contentSize.height) > 0.5 {
+            animateResize()
         }
         container.updateEdges()
     }
@@ -301,16 +335,50 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
         highlighter.apply(to: storage)
     }
 
-    /// Grows with the text up to `maxTextHeight`; beyond that the text scrolls under the edge fades.
-    private func preferredSize() -> NSSize {
+    /// Measures the text and derives the popover height it wants (growing with the text up to
+    /// `maxTextHeight`) and whether it overflows, i.e. needs scrolling, scroller and edge fades.
+    private func updateLayoutState() {
         container.layoutSubtreeIfNeeded()
         var textHeight = Self.minTextHeight
         if let layout = textView.textLayoutManager {
             layout.ensureLayout(for: layout.documentRange)
             textHeight = layout.usageBoundsForTextContainer.height + textView.textContainerInset.height * 2
         }
+        let overflowing = textHeight > maxTextHeight
+        clipView.isPinned = !overflowing
+        container.scrollView.hasVerticalScroller = overflowing
+        container.isOverflowing = overflowing
         let clamped = min(max(textHeight, Self.minTextHeight), maxTextHeight)
-        return NSSize(width: width, height: ceil(clamped + Self.textTop + Self.hintArea))
+        targetHeight = ceil(clamped + Self.textTop + Self.hintArea)
+    }
+
+    /// Eases the popover toward `targetHeight` frame by frame. NSPopover's own `animates` is only a
+    /// hint for content size changes and visibly snaps, so the curve is driven here. Exponential
+    /// approach: retargeting mid-flight (fast typing) stays smooth with no restart.
+    private func animateResize() {
+        guard resizeLink == nil else { return }
+        lastFrameTime = nil
+        // Tied to the screen, not a view: a view's link was observed to pause mid-animation once the
+        // popover window started resizing.
+        let screen = textView.window?.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let link = screen.displayLink(target: self, selector: #selector(stepResize(_:)))
+        link.add(to: .main, forMode: .common)
+        resizeLink = link
+    }
+
+    @objc private func stepResize(_ link: CADisplayLink) {
+        let now = link.timestamp
+        let dt = lastFrameTime.map { now - $0 } ?? link.duration
+        lastFrameTime = now
+        let current = popover.contentSize.height
+        let progress = 1 - exp(-dt / Self.resizeTimeConstant)
+        var next = current + (targetHeight - current) * progress
+        if abs(targetHeight - next) < 0.5 {
+            next = targetHeight
+            link.invalidate()
+            resizeLink = nil
+        }
+        popover.contentSize = NSSize(width: width, height: next)
     }
 
     private func placeCursor() {
