@@ -46,6 +46,15 @@ if FileManager.default.fileExists(atPath: url.path) {
     original = ""
 }
 
+// AppKit and the input-method frameworks NSLog to stderr, which is the caller's terminal: Claude Code
+// hands us its TTY, and the noise lands inside its TUI (it stays visible when an unchanged prompt
+// means no redraw). Our own errors are reported above, so silence stderr from here on.
+let devNull = open("/dev/null", O_WRONLY)
+if devNull >= 0 {
+    dup2(devNull, STDERR_FILENO)
+    close(devNull)
+}
+
 let app = NSApplication.shared
 // Accessory + non-activating panel: the terminal stays the active app, so focus
 // returns to it naturally when we exit.
