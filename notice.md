@@ -21,9 +21,9 @@ then exits 0. Built with SwiftPM + AppKit, macOS 26+.
   made clear, a system `NSTextInsertionIndicator` (inside a host view, since it cancels its own frame
   animations) glides, and a `CAShapeLayer` draws the selection as rounded outlines. The selection view
   must stay the bottom-most subview: TextKit 2 draws text in `_NSTextContentView` subviews above it.
-  VS Code itself animates only the caret (80ms); the selection animation here is an extra. It animates
-  each visual line's horizontal extent (lines enter/leave via zero width) and rebuilds the outline every
-  frame. Don't go back to interpolating the outline path: across different lines it morphs through
+  VS Code itself animates only the caret (80ms); the selection animation here is an extra. Its top/bottom
+  edges slide vertically to reveal or hide lines (the user preferred this over lines growing sideways
+  from zero width), lines that stay ease horizontally, and the outline is rebuilt every frame. Don't go back to interpolating the outline path: across different lines it morphs through
   distorted shapes.
 - TextKit 2 quirks the selection code works around: `.selection` segments run to the container edge when
   a line break is selected and report empty lines as a zero rect at the origin; `firstRect(forCharacterRange:)`

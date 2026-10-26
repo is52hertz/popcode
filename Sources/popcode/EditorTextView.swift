@@ -30,12 +30,15 @@ final class EditorTextView: NSTextView {
     /// leave a row of tiny rounded notches down the side of the selection.
     private static let edgeSnap: CGFloat = 6
 
-    // The selection animates per line rather than by interpolating outlines (which morphs through
-    // distorted shapes when the lines differ): each visual line's horizontal extent eases toward its
-    // target, lines enter and leave by growing from and collapsing to zero width, and the rounded
-    // outline is rebuilt from the current lines every frame, so it is always square and rounded.
+    // The selection grows and shrinks vertically: its top and bottom edges slide to reveal or hide
+    // whole lines (down when selecting forward, up when backward), while lines that stay ease their
+    // horizontal extent. The rounded outline is rebuilt every frame from the lines clipped to the
+    // revealed band, so it stays square-edged; interpolating outline paths instead morphs through
+    // distorted shapes whenever the lines differ.
     private var shownLines: [CGFloat: CGRect] = [:]
     private var targetLines: [CGFloat: CGRect] = [:]
+    private var revealed: ClosedRange<CGFloat> = 0...0
+    private var targetRevealed: ClosedRange<CGFloat> = 0...0
     private var selectionLink: CADisplayLink?
     private var lastSelectionFrame: CFTimeInterval?
 
@@ -174,28 +177,39 @@ final class EditorTextView: NSTextView {
 
     // MARK: - Selection
 
-    /// - Parameter growsForward: the moving end is after the anchor, so lines enter from and leave
-    ///   toward their leading edge (and their trailing edge when selecting backward).
+    /// - Parameter growsForward: the moving end is after the anchor, so a fresh selection grows
+    ///   downward from its top (upward from its bottom when selecting backward).
     private func updateSelection(_ selection: NSRange, growsForward: Bool, animated: Bool) {
         selectionView.frame = bounds
         selectionShape.frame = selectionView.bounds
         let lines = selection.length > 0 ? selectionLines(for: selection) : []
+        let previousKeys = Set(targetLines.keys)
         targetLines = Dictionary(lines.map { (Self.lineKey($0), $0) }, uniquingKeysWith: { a, _ in a })
-
-        guard animated, window != nil else {
-            shownLines = targetLines
+        guard let top = lines.first?.minY, let bottom = lines.last?.maxY else {
+            // Deselecting clears at once, as in VS Code.
+            shownLines = [:]
             stopSelectionAnimation()
             renderSelection()
             return
         }
-        func collapsed(_ rect: CGRect) -> CGRect {
-            CGRect(x: growsForward ? rect.minX : rect.maxX, y: rect.minY, width: 0, height: rect.height)
+        targetRevealed = top...bottom
+
+        guard animated, window != nil else {
+            shownLines = targetLines
+            revealed = targetRevealed
+            stopSelectionAnimation()
+            renderSelection()
+            return
+        }
+        if previousKeys.isDisjoint(with: targetLines.keys) {
+            // A new selection elsewhere: start from the anchor's edge instead of sliding the band
+            // across the document.
+            shownLines = [:]
+            let edge = growsForward ? top : bottom
+            revealed = edge...edge
         }
         for (key, rect) in targetLines where shownLines[key] == nil {
-            shownLines[key] = collapsed(rect)
-        }
-        for (key, rect) in shownLines where targetLines[key] == nil {
-            targetLines[key] = collapsed(rect)
+            shownLines[key] = rect
         }
         startSelectionAnimation()
     }
@@ -224,31 +238,36 @@ final class EditorTextView: NSTextView {
         lastSelectionFrame = now
         let progress = 1 - exp(-dt / Self.selectionTimeConstant)
         var settled = true
+        func ease(_ current: CGFloat, _ target: CGFloat) -> CGFloat {
+            let next = current + (target - current) * progress
+            if abs(target - next) < 0.25 { return target }
+            settled = false
+            return next
+        }
+
+        // Lines leaving the selection keep their shape and are hidden by the sliding edge.
         for (key, target) in targetLines {
             let current = shownLines[key] ?? target
-            var minX = current.minX + (target.minX - current.minX) * progress
-            var maxX = current.maxX + (target.maxX - current.maxX) * progress
-            if abs(target.minX - minX) < 0.25 && abs(target.maxX - maxX) < 0.25 {
-                minX = target.minX
-                maxX = target.maxX
-            } else {
-                settled = false
-            }
+            let minX = ease(current.minX, target.minX)
+            let maxX = ease(current.maxX, target.maxX)
             shownLines[key] = CGRect(x: minX, y: target.minY, width: maxX - minX, height: target.height)
         }
+        revealed = ease(revealed.lowerBound, targetRevealed.lowerBound)
+            ... max(ease(revealed.upperBound, targetRevealed.upperBound), revealed.lowerBound)
         if settled {
-            // Lines that were only collapsing toward zero width are done.
-            for (key, rect) in shownLines where rect.width <= 0 {
-                shownLines[key] = nil
-                targetLines[key] = nil
-            }
+            shownLines = targetLines
             stopSelectionAnimation()
         }
         renderSelection()
     }
 
     private func renderSelection() {
-        let lines = shownLines.values.filter { $0.width > 0.5 }.sorted { $0.minY < $1.minY }
+        let lines = shownLines.values.compactMap { line -> CGRect? in
+            let top = max(line.minY, revealed.lowerBound)
+            let bottom = min(line.maxY, revealed.upperBound)
+            guard bottom - top > 0.5, line.width > 0.5 else { return nil }
+            return CGRect(x: line.minX, y: top, width: line.width, height: bottom - top)
+        }.sorted { $0.minY < $1.minY }
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         selectionShape.path = Self.roundedPath(Self.polygons(from: lines), radius: Self.selectionRadius)
