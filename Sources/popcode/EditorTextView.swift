@@ -24,10 +24,20 @@ final class EditorTextView: NSTextView {
     /// The fixed end of the selection. NSTextView keeps its anchor private, and neither its
     /// selectionAffinity nor TextKit 2's selection affinity reliably reports direction.
     private var selectionAnchor = 0
-    /// Vertex y-coordinates of each polygon in the drawn selection. The path animates only when
-    /// these are unchanged, i.e. the selection grows or shrinks sideways within the same lines;
-    /// interpolating between outlines of different lines morphs through distorted shapes.
-    private var selectionSignature: [[CGFloat]] = []
+    /// Time constant of the selection's per-line ease-out; ~95% settled after 3τ ≈ the caret glide.
+    private static let selectionTimeConstant: CFTimeInterval = 0.027
+    /// Neighbouring line edges closer than this are evened out; proportional glyph widths otherwise
+    /// leave a row of tiny rounded notches down the side of the selection.
+    private static let edgeSnap: CGFloat = 6
+
+    // The selection animates per line rather than by interpolating outlines (which morphs through
+    // distorted shapes when the lines differ): each visual line's horizontal extent eases toward its
+    // target, lines enter and leave by growing from and collapsing to zero width, and the rounded
+    // outline is rebuilt from the current lines every frame, so it is always square and rounded.
+    private var shownLines: [CGFloat: CGRect] = [:]
+    private var targetLines: [CGFloat: CGRect] = [:]
+    private var selectionLink: CADisplayLink?
+    private var lastSelectionFrame: CFTimeInterval?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -88,8 +98,10 @@ final class EditorTextView: NSTextView {
     private func updateDecorations(animated: Bool) {
         guard isDecorated else { return }
         let selection = selectedRange()
-        updateSelection(selection, animated: animated)
-        updateCaret(at: activeEnd(of: selection), animated: animated)
+        let active = activeEnd(of: selection)
+        updateSelection(selection, growsForward: active > selectionAnchor || selection.length == 0,
+                        animated: animated)
+        updateCaret(at: active, animated: animated)
     }
 
     /// The end of the selection that is moving, where VS Code keeps the caret while selecting.
@@ -162,36 +174,93 @@ final class EditorTextView: NSTextView {
 
     // MARK: - Selection
 
-    private func updateSelection(_ selection: NSRange, animated: Bool) {
+    /// - Parameter growsForward: the moving end is after the anchor, so lines enter from and leave
+    ///   toward their leading edge (and their trailing edge when selecting backward).
+    private func updateSelection(_ selection: NSRange, growsForward: Bool, animated: Bool) {
         selectionView.frame = bounds
-        let polygons = selection.length > 0 ? selectionPolygons(for: selection) : []
-        let signature = polygons.map { $0.map { ($0.y * 2).rounded() / 2 } }
-        let path = Self.roundedPath(polygons, radius: Self.selectionRadius)
-
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
         selectionShape.frame = selectionView.bounds
-        if animated, !polygons.isEmpty, signature == selectionSignature {
-            let animation = CABasicAnimation(keyPath: "path")
-            animation.fromValue = selectionShape.presentation()?.path ?? selectionShape.path
-            animation.duration = Self.glide
-            animation.timingFunction = CAMediaTimingFunction(name: .easeOut)
-            selectionShape.add(animation, forKey: "path")
-        } else {
-            selectionShape.removeAnimation(forKey: "path")
+        let lines = selection.length > 0 ? selectionLines(for: selection) : []
+        targetLines = Dictionary(lines.map { (Self.lineKey($0), $0) }, uniquingKeysWith: { a, _ in a })
+
+        guard animated, window != nil else {
+            shownLines = targetLines
+            stopSelectionAnimation()
+            renderSelection()
+            return
         }
-        selectionShape.path = path
-        CATransaction.commit()
-        selectionSignature = signature
+        func collapsed(_ rect: CGRect) -> CGRect {
+            CGRect(x: growsForward ? rect.minX : rect.maxX, y: rect.minY, width: 0, height: rect.height)
+        }
+        for (key, rect) in targetLines where shownLines[key] == nil {
+            shownLines[key] = collapsed(rect)
+        }
+        for (key, rect) in shownLines where targetLines[key] == nil {
+            targetLines[key] = collapsed(rect)
+        }
+        startSelectionAnimation()
     }
 
-    /// One rect per visual line, merged into outlines: lines that overlap horizontally join into a
-    /// single polygon (VS Code's connected shape), otherwise they stay separate.
+    private static func lineKey(_ rect: CGRect) -> CGFloat { (rect.minY * 2).rounded() / 2 }
+
+    private func startSelectionAnimation() {
+        guard selectionLink == nil else { return }
+        lastSelectionFrame = nil
+        // Screen-owned, like the popover resize: a view's display link pauses while the popover
+        // window resizes.
+        let screen = window?.screen ?? NSScreen.main ?? NSScreen.screens[0]
+        let link = screen.displayLink(target: self, selector: #selector(stepSelection(_:)))
+        link.add(to: .main, forMode: .common)
+        selectionLink = link
+    }
+
+    private func stopSelectionAnimation() {
+        selectionLink?.invalidate()
+        selectionLink = nil
+    }
+
+    @objc private func stepSelection(_ link: CADisplayLink) {
+        let now = link.timestamp
+        let dt = lastSelectionFrame.map { now - $0 } ?? link.duration
+        lastSelectionFrame = now
+        let progress = 1 - exp(-dt / Self.selectionTimeConstant)
+        var settled = true
+        for (key, target) in targetLines {
+            let current = shownLines[key] ?? target
+            var minX = current.minX + (target.minX - current.minX) * progress
+            var maxX = current.maxX + (target.maxX - current.maxX) * progress
+            if abs(target.minX - minX) < 0.25 && abs(target.maxX - maxX) < 0.25 {
+                minX = target.minX
+                maxX = target.maxX
+            } else {
+                settled = false
+            }
+            shownLines[key] = CGRect(x: minX, y: target.minY, width: maxX - minX, height: target.height)
+        }
+        if settled {
+            // Lines that were only collapsing toward zero width are done.
+            for (key, rect) in shownLines where rect.width <= 0 {
+                shownLines[key] = nil
+                targetLines[key] = nil
+            }
+            stopSelectionAnimation()
+        }
+        renderSelection()
+    }
+
+    private func renderSelection() {
+        let lines = shownLines.values.filter { $0.width > 0.5 }.sorted { $0.minY < $1.minY }
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        selectionShape.path = Self.roundedPath(Self.polygons(from: lines), radius: Self.selectionRadius)
+        CATransaction.commit()
+    }
+
+    /// One rect per visual line, stacked so neighbours touch.
     ///
     /// Built from line fragments rather than `.selection` segments: those run to the container's
     /// edge whenever a line break is selected, while VS Code stops each line at its text and adds
     /// only a sliver for the newline.
-    private func selectionPolygons(for selection: NSRange) -> [[CGPoint]] {
+    private func selectionLines(for selection: NSRange) -> [CGRect] {
         guard let layoutManager = textLayoutManager,
               let content = layoutManager.textContentManager,
               let start = content.location(content.documentRange.location, offsetBy: selection.location),
@@ -244,10 +313,48 @@ final class EditorTextView: NSTextView {
             lines[i + 1].origin.y = middle
         }
 
+        // Even out small differences between neighbouring edges. A run only extends while its whole
+        // spread stays under the threshold, so a gradual drift is not dragged to one value.
+        func runs(_ value: (CGRect) -> CGFloat) -> [ClosedRange<Int>] {
+            var result: [ClosedRange<Int>] = []
+            var index = 0
+            while index < lines.count {
+                var last = index
+                var low = value(lines[index]), high = low
+                while last + 1 < lines.count {
+                    let next = value(lines[last + 1])
+                    guard max(high, next) - min(low, next) < Self.edgeSnap else { break }
+                    low = min(low, next)
+                    high = max(high, next)
+                    last += 1
+                }
+                result.append(index...last)
+                index = last + 1
+            }
+            return result
+        }
+        for run in runs(\.maxX) {
+            let maxX = lines[run].map(\.maxX).max()!
+            for i in run { lines[i].size.width = maxX - lines[i].minX }
+        }
+        for run in runs(\.minX) {
+            let minX = lines[run].map(\.minX).min()!
+            for i in run {
+                lines[i].size.width += lines[i].minX - minX
+                lines[i].origin.x = minX
+            }
+        }
+        return lines
+    }
+
+    /// Lines that overlap horizontally join into one outline (VS Code's connected shape); the
+    /// rest stay separate.
+    private static func polygons(from lines: [CGRect]) -> [[CGPoint]] {
         var groups: [[CGRect]] = []
         for line in lines {
             if let previous = groups.last?.last,
-               min(previous.maxX, line.maxX) - max(previous.minX, line.minX) > Self.selectionRadius {
+               abs(previous.maxY - line.minY) < 1,
+               min(previous.maxX, line.maxX) - max(previous.minX, line.minX) > 0.5 {
                 groups[groups.count - 1].append(line)
             } else {
                 groups.append([line])
