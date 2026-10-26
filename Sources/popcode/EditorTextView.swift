@@ -17,7 +17,8 @@ final class EditorTextView: NSTextView {
     /// The indicator resets its own frame animations whenever it is moved, so it rides inside a
     /// plain view and the glide is applied to that view instead.
     private let caretHost = NSView()
-    private let selectionView = NSView()
+    /// Flipped to match the text view; an unflipped host mirrored the outline vertically.
+    private let selectionView = FlippedView()
     private let selectionShape = CAShapeLayer()
     private var isDecorated = false
     private var lastSelection = NSRange(location: 0, length: 0)
@@ -36,6 +37,13 @@ final class EditorTextView: NSTextView {
         selectionView.layer?.addSublayer(selectionShape)
         selectionShape.fillColor = NSColor.selectedTextBackgroundColor.cgColor
         addSubview(selectionView, positioned: .below, relativeTo: nil)
+        // While the window is inactive TextKit 2 paints its own gray highlight and ignores
+        // selectedTextAttributes, so stand aside instead of stacking two highlights.
+        for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
+            NotificationCenter.default.addObserver(self, selector: #selector(windowKeyChanged),
+                                                   name: name, object: window)
+        }
+        windowKeyChanged()
 
         caret.displayMode = .automatic
         caret.autoresizingMask = [.height]
@@ -66,6 +74,10 @@ final class EditorTextView: NSTextView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             selectionShape.fillColor = NSColor.selectedTextBackgroundColor.cgColor
         }
+    }
+
+    @objc private func windowKeyChanged() {
+        selectionView.isHidden = !(window?.isKeyWindow ?? false)
     }
 
     // MARK: - Caret
@@ -102,20 +114,31 @@ final class EditorTextView: NSTextView {
         }
     }
 
+    /// From TextKit 2 directly: `firstRect(forCharacterRange:)` only estimates positions outside the
+    /// laid-out viewport, which put the caret on the wrong line.
     private func caretRect(at location: Int) -> NSRect? {
-        guard let window else { return nil }
-        let screenRect = firstRect(forCharacterRange: NSRange(location: location, length: 0), actualRange: nil)
+        guard let layoutManager = textLayoutManager, let content = layoutManager.textContentManager,
+              let position = content.location(content.documentRange.location, offsetBy: location),
+              let range = NSTextRange(location: position, end: position)
+        else { return nil }
+        layoutManager.ensureLayout(for: range)
+        var segment: CGRect?
+        layoutManager.enumerateTextSegments(in: range, type: .selection, options: .rangeNotRequired) {
+            _, frame, _, _ in
+            segment = frame
+            return false
+        }
+        let origin = textContainerOrigin
         var rect: NSRect
-        if screenRect.height > 0 {
-            rect = convert(window.convertFromScreen(screenRect), from: nil)
+        if let segment, segment.height > 0 {
+            rect = segment.offsetBy(dx: origin.x, dy: origin.y)
         } else {
             // Empty document: no glyphs to measure, so use the typing font's line height.
             let font = (typingAttributes[.font] as? NSFont) ?? MarkdownHighlighter.bodyFont
-            let origin = textContainerOrigin
             rect = NSRect(x: origin.x + (textContainer?.lineFragmentPadding ?? 0), y: origin.y,
                           width: 0, height: ceil(font.ascender - font.descender + font.leading))
         }
-        rect.size.width = max(rect.width, 2)
+        rect.size.width = 2
         return rect.integral
     }
 
@@ -252,4 +275,8 @@ final class EditorTextView: NSTextView {
         }
         return true
     }
+}
+
+final class FlippedView: NSView {
+    override var isFlipped: Bool { true }
 }
