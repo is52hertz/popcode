@@ -30,6 +30,12 @@ then exits 0. Built with SwiftPM + AppKit, macOS 26+.
   only estimates positions outside the viewport. Geometry comes from text line fragments instead.
 - There is no main menu: ⌘-shortcuts are routed by hand in `EditorTextView.performKeyEquivalent`.
   New ⌘ shortcuts go there.
+- Line numbers (⌘L) are drawn by `LineNumberView` in the text view's left margin and must never change
+  the text layout. That is why the side padding lives in `textContainerInset` (the scroll view spans the
+  container, `scrollerInsets` keeps the scroller in place). A number's baseline is its paragraph's first
+  line box bottom plus the font's descender: TextKit 2 keeps an empty line's spacing below it, so the glyph
+  origin would lift it. The line after a final newline has no fragment and is placed via `caretRect`.
+  Not on Option: right Option is the user's WeType voice toggle.
 - Don't add custom glass/visual-effect backgrounds inside the popover; Apple's Liquid Glass guidance
   says to let the system draw popover backgrounds (a custom borderless glass panel showed a stray frame).
 - AppKit has no public scroll edge effect for a free-standing scroll view (`NSScrollEdgeEffectStyle`

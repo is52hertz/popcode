@@ -1,7 +1,7 @@
 import AppKit
 
-/// The editing surface: a VS Code-style smooth caret and rounded, animated selection, plus the
-/// ⌘-shortcuts popcode routes by hand because it has no main menu.
+/// The editing surface: a VS Code-style smooth caret and rounded, animated selection, line numbers
+/// on demand, plus the ⌘-shortcuts popcode routes by hand because it has no main menu.
 final class EditorTextView: NSTextView {
     var onSave: () -> Void = {}
     /// Called after the input method's marked text changes. Unlike committed text, marked text
@@ -50,6 +50,17 @@ final class EditorTextView: NSTextView {
     private var autoscrollLink: CADisplayLink?
     private var lastAutoscrollFrame: CFTimeInterval?
 
+    // Line numbers (⌘L) are an overlay in the left margin, so showing them never rewraps or resizes
+    // the text. One number per logical line, beside its first visual line.
+    private let lineNumbers = LineNumberView()
+    private var showsLineNumbers = false
+    /// Where the caret is, for highlighting its line's number.
+    private var caretLocation = 0
+    private static let lineNumberSize: CGFloat = 10
+    /// Space between the numbers and the text.
+    private static let lineNumberGap: CGFloat = 6
+    private static let lineNumberFade: TimeInterval = 0.12
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         guard window != nil, !isDecorated else { return }
@@ -74,6 +85,10 @@ final class EditorTextView: NSTextView {
         caretHost.wantsLayer = true
         caretHost.addSubview(caret)
         addSubview(caretHost)
+
+        lineNumbers.owner = self
+        lineNumbers.alphaValue = 0
+        addSubview(lineNumbers)
         updateDecorations(animated: false)
     }
 
@@ -104,6 +119,7 @@ final class EditorTextView: NSTextView {
         effectiveAppearance.performAsCurrentDrawingAppearance {
             selectionShape.fillColor = NSColor.selectedTextBackgroundColor.cgColor
         }
+        lineNumbers.needsDisplay = true
     }
 
     @objc private func windowKeyChanged() {
@@ -116,9 +132,11 @@ final class EditorTextView: NSTextView {
         guard isDecorated else { return }
         let selection = selectedRange()
         let active = activeEnd(of: selection)
+        caretLocation = active
         updateSelection(selection, growsForward: active > selectionAnchor || selection.length == 0,
                         animated: animated)
         updateCaret(at: active, animated: animated)
+        if showsLineNumbers { refreshLineNumbers() }
     }
 
     /// The end of the selection that is moving, where VS Code keeps the caret while selecting.
@@ -434,6 +452,74 @@ final class EditorTextView: NSTextView {
         return path
     }
 
+    // MARK: - Line numbers
+
+    private func toggleLineNumbers() {
+        showsLineNumbers.toggle()
+        if showsLineNumbers { refreshLineNumbers() }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Self.lineNumberFade
+            lineNumbers.animator().alphaValue = showsLineNumbers ? 1 : 0
+        }
+    }
+
+    private func refreshLineNumbers() {
+        let margin = textContainerOrigin.x + (textContainer?.lineFragmentPadding ?? 0)
+        lineNumbers.frame = NSRect(x: 0, y: 0, width: max(margin - Self.lineNumberGap, 0), height: bounds.height)
+        lineNumbers.needsDisplay = true
+    }
+
+    /// Draws into `LineNumberView`, which shares this view's flipped coordinates. Only reads the
+    /// text, so it is safe mid-composition.
+    fileprivate func drawLineNumbers(in dirtyRect: NSRect, width: CGFloat) {
+        guard let layoutManager = textLayoutManager, let content = layoutManager.textContentManager,
+              let storage = textStorage else { return }
+        let text = storage.string as NSString
+        let documentStart = content.documentRange.location
+        let origin = textContainerOrigin
+        let bodyFont = (typingAttributes[.font] as? NSFont) ?? MarkdownHighlighter.bodyFont
+
+        // Baseline = bottom of the paragraph's first line less its font's descent. TextKit's glyph
+        // origin would do for lines with text, but an empty line keeps its line spacing below it
+        // instead of above, which would lift its number above where typed text lands.
+        var baselines: [CGFloat] = []
+        layoutManager.enumerateTextLayoutFragments(from: documentStart, options: [.ensuresLayout]) { fragment in
+            guard let line = fragment.textLineFragments.first else { return true }
+            let start = content.offset(from: documentStart, to: fragment.rangeInElement.location)
+            let font = start < text.length ? storage.attribute(.font, at: start, effectiveRange: nil) as? NSFont : nil
+            baselines.append(origin.y + fragment.layoutFragmentFrame.minY + line.typographicBounds.maxY
+                             + (font ?? bodyFont).descender)
+            return true
+        }
+        // The line after a final newline (or an empty file's only line) has no fragment of its own;
+        // number it where the caret goes.
+        if text.length == 0 || text.character(at: text.length - 1) == 0x0A,
+           let caret = caretRect(at: text.length) {
+            baselines.append(caret.maxY + bodyFont.descender)
+        }
+
+        var currentLine = 1
+        for unit in storage.string.utf16.prefix(caretLocation) where unit == 0x0A { currentLine += 1 }
+
+        // Four digits and up would outgrow the margin, so the numbers shrink to fit.
+        var font = NSFont.monospacedDigitSystemFont(ofSize: Self.lineNumberSize, weight: .regular)
+        let needed = CGFloat(String(baselines.count).count) * ("0" as NSString).size(withAttributes: [.font: font]).width
+        if needed > width {
+            font = .monospacedDigitSystemFont(ofSize: font.pointSize * width / needed, weight: .regular)
+        }
+        for (index, baseline) in baselines.enumerated() {
+            let top = baseline - font.ascender
+            guard top < dirtyRect.maxY, baseline - font.descender > dirtyRect.minY else { continue }
+            let label = String(index + 1) as NSString
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: index + 1 == currentLine ? NSColor.secondaryLabelColor : NSColor.tertiaryLabelColor,
+            ]
+            label.draw(at: NSPoint(x: width - label.size(withAttributes: attributes).width, y: top),
+                       withAttributes: attributes)
+        }
+    }
+
     // MARK: - Smooth autoscroll
 
     override func autoscroll(with event: NSEvent) -> Bool {
@@ -502,6 +588,7 @@ final class EditorTextView: NSTextView {
         case ("c", false): copy(nil)
         case ("v", false): paste(nil)
         case ("a", false): selectAll(nil)
+        case ("l", false): toggleLineNumbers()
         case ("z", false): undoManager?.undo()
         case ("z", true): undoManager?.redo()
         case ("f", false):
@@ -516,4 +603,18 @@ final class EditorTextView: NSTextView {
 
 final class FlippedView: NSView {
     override var isFlipped: Bool { true }
+}
+
+/// Shows EditorTextView's line numbers; a view of its own so they fade in and out as one.
+final class LineNumberView: NSView {
+    weak var owner: EditorTextView?
+
+    override var isFlipped: Bool { true }
+
+    /// Clicks in the margin still place the caret.
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        owner?.drawLineNumbers(in: dirtyRect, width: bounds.width)
+    }
 }

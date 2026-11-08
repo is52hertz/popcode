@@ -41,6 +41,7 @@ writing Markdown more comfortably than in a TUI input box. That shouldn't take a
 - Syntax highlighting for the files you tend to open in a hurry: shell scripts and dotfiles
   (`.zshrc`, `.bashrc`, `*.sh`, or a `#!` line naming sh/zsh/bash), JSON/JSONC, YAML, TOML, and
   INI-style configs such as `.gitconfig`. Code files use a monospaced font.
+- Line numbers on demand with **⌘L**, drawn in the margin so the text never shifts.
 
 **Polished details**
 - The popover grows with the text; past its maximum height the text scrolls under soft
@@ -100,6 +101,7 @@ Open a new terminal and press Ctrl+G in Claude Code.
 | ⌘↩ / ⌘S | Save and close |
 | Esc | Close without saving (press twice if there are changes) |
 | ⌘F | Find |
+| ⌘L | Show / hide line numbers |
 | ⌘Z / ⇧⌘Z | Undo / redo |
 
 ## How it plugs in
