@@ -115,6 +115,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
     private static let textTop: CGFloat = 10
     private static let hintArea: CGFloat = 30
     private static let minTextHeight: CGFloat = 72
+    /// Side padding, kept inside the text view (its inset) rather than around the scroll view, so the
+    /// text view's left margin is wide enough for the line numbers.
     private static let horizontalPadding: CGFloat = 8
     /// Time constant of the ease-out height animation; ~95% settled after 3τ.
     private static let resizeTimeConstant: CFTimeInterval = 0.07
@@ -145,6 +147,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
         let scrollView = NSScrollView()
         scrollView.hasVerticalScroller = true
         scrollView.autohidesScrollers = true
+        scrollView.scrollerInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: Self.horizontalPadding)
         scrollView.drawsBackground = false
         clipView.drawsBackground = false
         scrollView.contentView = clipView
@@ -175,7 +178,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
         textView.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: .greatestFiniteMagnitude)
         textView.autoresizingMask = [.width]
         textView.textContainer?.widthTracksTextView = true
-        textView.textContainerInset = NSSize(width: 12, height: 8)
+        textView.textContainerInset = NSSize(width: 12 + Self.horizontalPadding, height: 8)
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.isAutomaticTextReplacementEnabled = false
@@ -192,8 +195,8 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
         }
         NSLayoutConstraint.activate([
             scrollView.topAnchor.constraint(equalTo: container.topAnchor, constant: Self.textTop),
-            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: Self.horizontalPadding),
-            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -Self.horizontalPadding),
+            scrollView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             scrollView.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -Self.hintArea),
             hint.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -20),
             hint.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -10),
