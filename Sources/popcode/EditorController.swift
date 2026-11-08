@@ -282,12 +282,6 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
             handleEscape()
             return true
         }
-        // An input method can end its session but leave its marked text behind and pass Return
-        // through (WeType after a long dictation here). NSTextView would then replace all of that
-        // text with the newline, unrecoverably, since marked text never reaches the undo stack.
-        if selector == #selector(NSResponder.insertNewline(_:)), textView.hasMarkedText() {
-            textView.unmarkText()
-        }
         return false
     }
 

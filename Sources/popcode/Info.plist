@@ -10,5 +10,9 @@
 	<string>popcode</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>LSUIElement</key>
+	<true/>
 </dict>
 </plist>

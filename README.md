@@ -75,9 +75,13 @@ xattr -d com.apple.quarantine ~/.local/bin/popcode   # the binary is not notariz
 ```sh
 git clone https://github.com/is52hertz/popcode.git
 cd popcode
-swift build -c release
-ln -sf "$PWD/.build/release/popcode" ~/.local/bin/popcode
+scripts/bundle.sh
+ln -sf "$PWD/.build/popcode.app/Contents/MacOS/popcode" ~/.local/bin/popcode
 ```
+
+popcode runs from an app bundle so macOS knows it as an app; some input methods (WeType's voice
+input, for one) won't finish committing long text into an anonymous process. Linking to the
+binary inside the bundle is fine: popcode re-launches itself from there.
 
 ### Make it your editor
 

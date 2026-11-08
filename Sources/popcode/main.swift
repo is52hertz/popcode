@@ -7,6 +7,16 @@ import AppKit
 //   popcode <file>               (git, most tools)
 //   popcode -g <file>:<line>     (Claude Code, because the name contains "code")
 
+// macOS registers the process as popcode.app (bundle identifier included) only when it is started from
+// inside the bundle, not through a symlink such as ~/.local/bin/popcode. Without that identity WeType's
+// voice input leaves long dictation uncommitted, so re-exec from the real path.
+if let executable = Bundle.main.executableURL {
+    let real = executable.resolvingSymlinksInPath()
+    if real.path != executable.path {
+        execv(real.path, CommandLine.unsafeArgv)
+    }
+}
+
 func parseArguments(_ args: [String]) -> (path: String, line: Int?)? {
     var path: String?
     var line: Int?

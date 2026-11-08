@@ -7,12 +7,8 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "popcode",
-            exclude: ["Info.plist"],
-            linkerSettings: [
-                // Embeds Info.plist so the bare executable has a bundle identifier.
-                .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT", "-Xlinker", "__info_plist",
-                              "-Xlinker", "\(Context.packageDirectory)/Sources/popcode/Info.plist"])
-            ]
+            // Bundled into popcode.app by scripts/bundle.sh.
+            exclude: ["Info.plist"]
         )
     ]
 )

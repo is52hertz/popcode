@@ -50,13 +50,17 @@ then exits 0. Built with SwiftPM + AppKit, macOS 26+.
   `EditorTextView.setMarkedText` forwards it (`onMarkedTextChange` → `contentChanged`) so the popover grows
   and the clip view unpins; before that, a long dictation kept the old height with scrolling pinned to the
   top and the caret out of view.
-- If an input method leaves marked text behind and passes Return through, NSTextView replaces the whole
-  marked text with the newline and undo can't bring it back; `doCommandBy` unmarks it first.
-- WeType (微信输入法) voice input commits short results with `insertText`. Long results go through the
-  clipboard + ⌘V for apps on its lists (`voice_terminal_bundles`: Ghostty, Terminal, iTerm…; Chrome too);
-  other apps get its "MultilineCommit" path (clear marked text, delayed insert, AX caret checks). In popcode
-  that path gave up right after asking for `markedRange`, leaving the underlined text stuck (2026-11-09);
-  the embedded Info.plist (bundle identifier `io.github.is52hertz.popcode`, via `-sectcreate`) did not
-  change that. WeType's IMK calls: `/usr/bin/log show --predicate 'process == "WeType"'` (zsh's `log`
-  builtin shadows it). Its own `~/Library/Caches/WeType/Logs/*.xlog` are encrypted, but `strings` on its
-  binary shows its log messages and config keys.
+- popcode must run as `popcode.app` (built by `scripts/bundle.sh`). LaunchServices only records a bundle
+  identifier for a process exec'd from inside a bundle: a bare binary (even with an Info.plist embedded via
+  `-sectcreate`) or a symlink into the bundle shows `bundleID=[ NULL ]` in `lsappinfo info <pid>`, so
+  `main.swift` re-execs from the symlink-resolved path. Without the identity, WeType (微信输入法) never
+  commits long dictation (30s+): it asks for `validAttributesForMarkedText` and `markedRange`, then
+  stops, leaving the underlined marked text stuck; short dictation (plain `insertText`) worked either way.
+  Fixed and confirmed by a 31s test on 2026-11-09. Apps on WeType's lists (`voice_terminal_bundles`:
+  Ghostty, Terminal, iTerm…; Chrome) get long text via clipboard + ⌘V instead.
+- While WeType's text was stuck like that, Return wiped it with no undo, through a path that never reached
+  `doCommandBy` (an `unmarkText` guard there did nothing in the real case). Not understood; moot once commits work.
+- Debugging WeType: its IMK calls are in `/usr/bin/log show --predicate 'process == "WeType"'` (zsh's `log`
+  builtin shadows the tool). Its own `~/Library/Caches/WeType/Logs/*.xlog` are encrypted, but `strings` on
+  its binary shows its log messages and config keys. Dictation started within ~1s of popcode opening can
+  miss the input session (WeType then delivers the text to the clipboard).
