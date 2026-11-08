@@ -46,10 +46,17 @@ then exits 0. Built with SwiftPM + AppKit, macOS 26+.
   are not turned into headings) and is skipped while the IME has marked text.
 - osascript keystrokes and `screencapture` are not permitted from the agent shell here, so focus/IME
   behavior must be checked by hand.
-- Keep the embedded `Sources/popcode/Info.plist` (linked in via `-sectcreate __TEXT __info_plist`): it gives
-  the bare executable a bundle identifier. WeType (微信输入法) commits short dictation with `insertText`, but
-  long dictation by paste (back up the clipboard, clear the marked text, ⌘V, restore), and that path looks up
-  the target app first. In the logs (2026-11-09) popcode, then without a bundle identifier, was the only
-  client where it gave up before touching the clipboard, leaving the underlined text stuck. WeType's IMK
-  calls show up in `/usr/bin/log show --predicate 'process == "WeType"'` (zsh's `log` builtin shadows it);
-  its own `~/Library/Caches/WeType/Logs/*.xlog` are encrypted.
+- Marked text (pinyin composition, dictation) changes the text without `didChangeText`/`textDidChange`.
+  `EditorTextView.setMarkedText` forwards it (`onMarkedTextChange` → `contentChanged`) so the popover grows
+  and the clip view unpins; before that, a long dictation kept the old height with scrolling pinned to the
+  top and the caret out of view.
+- If an input method leaves marked text behind and passes Return through, NSTextView replaces the whole
+  marked text with the newline and undo can't bring it back; `doCommandBy` unmarks it first.
+- WeType (微信输入法) voice input commits short results with `insertText`. Long results go through the
+  clipboard + ⌘V for apps on its lists (`voice_terminal_bundles`: Ghostty, Terminal, iTerm…; Chrome too);
+  other apps get its "MultilineCommit" path (clear marked text, delayed insert, AX caret checks). In popcode
+  that path gave up right after asking for `markedRange`, leaving the underlined text stuck (2026-11-09);
+  the embedded Info.plist (bundle identifier `io.github.is52hertz.popcode`, via `-sectcreate`) did not
+  change that. WeType's IMK calls: `/usr/bin/log show --predicate 'process == "WeType"'` (zsh's `log`
+  builtin shadows it). Its own `~/Library/Caches/WeType/Logs/*.xlog` are encrypted, but `strings` on its
+  binary shows its log messages and config keys.

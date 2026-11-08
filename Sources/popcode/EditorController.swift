@@ -164,6 +164,7 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
 
         textView.delegate = self
         textView.onSave = { [weak self] in self?.save() }
+        textView.onMarkedTextChange = { [weak self] in self?.contentChanged() }
         textView.isRichText = false
         textView.allowsUndo = true
         textView.usesFindBar = true
@@ -281,10 +282,24 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
             handleEscape()
             return true
         }
+        // An input method can end its session but leave its marked text behind and pass Return
+        // through (WeType after a long dictation here). NSTextView would then replace all of that
+        // text with the newline, unrecoverably, since marked text never reaches the undo stack.
+        if selector == #selector(NSResponder.insertNewline(_:)), textView.hasMarkedText() {
+            textView.unmarkText()
+        }
         return false
     }
 
     func textDidChange(_ notification: Notification) {
+        contentChanged()
+    }
+
+    // MARK: - Helpers
+
+    /// Restyles and resizes for new text. Also runs for marked text, which posts no textDidChange:
+    /// without it a long dictation left the popover at its old height, scrolling pinned to the top.
+    private func contentChanged() {
         highlight()
         let wasOverflowing = container.isOverflowing
         updateLayoutState()
@@ -296,8 +311,6 @@ final class EditorController: NSObject, NSTextViewDelegate, NSPopoverDelegate {
         }
         container.updateEdges()
     }
-
-    // MARK: - Helpers
 
     private func highlight() {
         // Restyling the storage mid-composition would wipe the IME's marked-text styling;

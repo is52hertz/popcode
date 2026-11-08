@@ -4,6 +4,9 @@ import AppKit
 /// ⌘-shortcuts popcode routes by hand because it has no main menu.
 final class EditorTextView: NSTextView {
     var onSave: () -> Void = {}
+    /// Called after the input method's marked text changes. Unlike committed text, marked text
+    /// (pinyin composition, dictation) posts no didChangeText / textDidChange.
+    var onMarkedTextChange: () -> Void = {}
 
     /// Matches VS Code's `transition: all 80ms` on its smooth caret.
     private static let glide: TimeInterval = 0.08
@@ -82,6 +85,12 @@ final class EditorTextView: NSTextView {
     override func didChangeText() {
         // The delegate restyles the Markdown inside super, so geometry is final afterwards.
         super.didChangeText()
+        updateDecorations(animated: true)
+    }
+
+    override func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        super.setMarkedText(string, selectedRange: selectedRange, replacementRange: replacementRange)
+        onMarkedTextChange()
         updateDecorations(animated: true)
     }
 
