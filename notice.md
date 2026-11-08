@@ -46,3 +46,10 @@ then exits 0. Built with SwiftPM + AppKit, macOS 26+.
   are not turned into headings) and is skipped while the IME has marked text.
 - osascript keystrokes and `screencapture` are not permitted from the agent shell here, so focus/IME
   behavior must be checked by hand.
+- Keep the embedded `Sources/popcode/Info.plist` (linked in via `-sectcreate __TEXT __info_plist`): it gives
+  the bare executable a bundle identifier. WeType (微信输入法) commits short dictation with `insertText`, but
+  long dictation by paste (back up the clipboard, clear the marked text, ⌘V, restore), and that path looks up
+  the target app first. In the logs (2026-11-09) popcode, then without a bundle identifier, was the only
+  client where it gave up before touching the clipboard, leaving the underlined text stuck. WeType's IMK
+  calls show up in `/usr/bin/log show --predicate 'process == "WeType"'` (zsh's `log` builtin shadows it);
+  its own `~/Library/Caches/WeType/Logs/*.xlog` are encrypted.
