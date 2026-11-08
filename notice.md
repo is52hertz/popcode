@@ -69,8 +69,12 @@ Releases up to v0.2.0 shipped the bare binary, which has the WeType long-dictati
   stops, leaving the underlined marked text stuck; short dictation (plain `insertText`) worked either way.
   Fixed and confirmed by a 31s test on 2026-11-09. Apps on WeType's lists (`voice_terminal_bundles`:
   Ghostty, Terminal, iTerm…; Chrome) get long text via clipboard + ⌘V instead.
-- While WeType's text was stuck like that, Return wiped it with no undo, through a path that never reached
-  `doCommandBy` (an `unmarkText` guard there did nothing in the real case). Not understood; moot once commits work.
+- While an input method leaves marked text it no longer manages (WeType before the bundle fix), keys it
+  passes through arrive from the Text Services Manager as plain text (`SendUnicodeTextAEToUnicodeDoc` →
+  `NSTextInputContext insertText:replacementRange:` with the marked range), not as `doCommandBy`. So Return
+  replaced all of that text with a newline (traced with a logging build, 2026-11-09). Marked text never
+  enters the undo stack, so ⌘Z only removes the newline; Ctrl+Z is unbound (`noop:`). popcode has no guard:
+  telling such a passthrough from a real IME commit would mean guessing on the IME commit path.
 - Debugging WeType: its IMK calls are in `/usr/bin/log show --predicate 'process == "WeType"'` (zsh's `log`
   builtin shadows the tool). Its own `~/Library/Caches/WeType/Logs/*.xlog` are encrypted, but `strings` on
   its binary shows its log messages and config keys. WeType's input session for popcode is normally active
