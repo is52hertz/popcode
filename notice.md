@@ -68,5 +68,6 @@ then exits 0. Built with SwiftPM + AppKit, macOS 26+.
   `doCommandBy` (an `unmarkText` guard there did nothing in the real case). Not understood; moot once commits work.
 - Debugging WeType: its IMK calls are in `/usr/bin/log show --predicate 'process == "WeType"'` (zsh's `log`
   builtin shadows the tool). Its own `~/Library/Caches/WeType/Logs/*.xlog` are encrypted, but `strings` on
-  its binary shows its log messages and config keys. Dictation started within ~1s of popcode opening can
-  miss the input session (WeType then delivers the text to the clipboard).
+  its binary shows its log messages and config keys. WeType's input session for popcode is normally active
+  ~0.15s after launch (re-exec included). Once (old bare binary), dictation started 0.9s after launch
+  never reached popcode and WeType put the text on the clipboard instead; cause unknown.
