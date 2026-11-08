@@ -66,10 +66,14 @@ Download `popcode-<version>-macos-universal.tar.gz` from
 [Releases](https://github.com/is52hertz/popcode/releases), then:
 
 ```sh
-tar -xzf popcode-*-macos-universal.tar.gz
-mv popcode ~/.local/bin/          # or anywhere on your PATH
-xattr -d com.apple.quarantine ~/.local/bin/popcode   # the binary is not notarized
+tar -xzf popcode-*-macos-universal.tar.gz          # unpacks popcode.app
+mkdir -p ~/.local/share/popcode
+mv popcode.app ~/.local/share/popcode/
+xattr -dr com.apple.quarantine ~/.local/share/popcode/popcode.app   # the app is not notarized
+ln -sf ~/.local/share/popcode/popcode.app/Contents/MacOS/popcode ~/.local/bin/popcode
 ```
+
+v0.2.0 and earlier ship a bare `popcode` binary instead; move it onto your PATH.
 
 ### From source
 

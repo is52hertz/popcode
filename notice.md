@@ -6,6 +6,11 @@ arrow come from AppKit) pointing at the bottom of the frontmost (terminal) windo
 up to a cap, saves on ⌘↩ / ⌘S, discards on Esc (twice if modified),
 then exits 0. Built with SwiftPM + AppKit, macOS 26+.
 
+## Release
+`scripts/bundle.sh --arch arm64 --arch x86_64`, then
+`tar -czf popcode-vX.Y.Z-macos-universal.tar.gz -C .build popcode.app` and attach it to a GitHub release.
+Releases up to v0.2.0 shipped the bare binary, which has the WeType long-dictation bug (see Gotchas).
+
 ## Claude Code Ctrl+G contract (read from the v2.1.310 bundle; internal, may change)
 - Editor = `$VISUAL` → `$EDITOR` → first of `code`/`vi`/`nano` on PATH.
 - Prompt is written to `$TMPDIR/claude-prompt-<id>.md` with `[Pasted text #N]` expanded;
